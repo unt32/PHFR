@@ -1,0 +1,8 @@
+*.osm
+*.pyc
+
+data/
+cache/
+__pycache__/
+venv/
+.venv/
