@@ -7,17 +7,21 @@ directly. Designed to be safely called from a background QThread.
 """
 
 import heapq
+import logging
 import math
 import os
 
 import networkx as nx
+import numpy as np
 import osmnx as ox
+from scipy.spatial import cKDTree
 
 # Quieter console + cache downloaded data between runs for speed.
 ox.settings.log_console = False
 ox.settings.use_cache = True
 
 NETWORK_TYPE = "drive"
+logger = logging.getLogger("route_finder")
 
 
 class RouteNotFoundError(Exception):
@@ -35,6 +39,9 @@ class MapEngine:
     def __init__(self):
         self.graph = None  # networkx.MultiDiGraph
         self.graph_source = None  # human-readable description of how it was loaded
+        self._nearest_node_ids = None
+        self._nearest_node_tree = None
+        self._longitude_scale = 1.0
 
     # ------------------------------------------------------------------
     # Loading
@@ -50,6 +57,7 @@ class MapEngine:
             G = ox.graph_from_xml(file_path, simplify=True)
         elif lower.endswith(".pbf"):
             try:
+                logger.info("Opening PBF with pyrosm")
                 G = self._load_pbf(file_path)
             except ImportError as exc:
                 raise ImportError(
@@ -77,7 +85,11 @@ class MapEngine:
         # Keep only drivable highway ways. This excludes OSM buildings, POIs,
         # relations, and pedestrian-only paths that cannot be routed by car.
         nodes, edges = osm.get_network(nodes=True, network_type=NETWORK_TYPE)
-        G = osm.to_graph(nodes, edges, graph_type="networkx")
+        logger.info("Converting selected highway data to a network graph")
+        # Keeping all components avoids an expensive country-wide strongly
+        # connected-component pass during startup. Routing still reports a
+        # clean "no path" response for disconnected road islands.
+        G = osm.to_graph(nodes, edges, graph_type="networkx", retain_all=True)
         return G
 
     def _finalize_graph(self, G, source_desc: str, include_travel_times: bool = True):
@@ -93,6 +105,8 @@ class MapEngine:
         """
         self.graph = G
         self.graph_source = source_desc
+        self._nearest_node_ids = None
+        self._nearest_node_tree = None
         if include_travel_times:
             self._add_speeds()
             self._add_travel_times()
@@ -157,14 +171,28 @@ class MapEngine:
         """Return the graph node nearest to the given (lon, lat) coordinate."""
         if not self.has_graph():
             raise RuntimeError("No graph loaded yet.")
-        try:
-            return ox.distance.nearest_nodes(self.graph, lon, lat)
-        except ImportError as exc:
-            raise ImportError(
-                "Finding the nearest map node requires the 'scikit-learn' package, "
-                "which is missing.\n\nInstall it with:  pip install scikit-learn\n"
-                "then restart the app."
-            ) from exc
+        if self._nearest_node_tree is None:
+            self.prepare_spatial_index()
+        _, index = self._nearest_node_tree.query([lon * self._longitude_scale, lat])
+        return self._nearest_node_ids[index]
+
+    def prepare_spatial_index(self):
+        """Build a reusable nearest-node index for responsive map clicks."""
+        if not self.has_graph():
+            raise RuntimeError("No graph loaded yet.")
+        if self._nearest_node_tree is not None:
+            return
+
+        nodes = list(self.graph.nodes(data=True))
+        if not nodes:
+            raise RuntimeError("The loaded graph has no nodes.")
+        mean_lat = sum(data["y"] for _, data in nodes) / len(nodes)
+        self._longitude_scale = math.cos(math.radians(mean_lat))
+        coordinates = np.array(
+            [[data["x"] * self._longitude_scale, data["y"]] for _, data in nodes]
+        )
+        self._nearest_node_ids = [node_id for node_id, _ in nodes]
+        self._nearest_node_tree = cKDTree(coordinates)
 
     def node_xy(self, node_id):
         """Return (lon, lat) for a node id."""
@@ -200,14 +228,17 @@ class MapEngine:
         """Return a dict with distance_km, time_min and node_count for a route."""
         G = self.graph
         length_m = 0.0
+        travel_time_s = 0.0
         for u, v in zip(route[:-1], route[1:]):
             # A MultiDiGraph may have several parallel edges between u and v;
             # take the shortest one, matching what shortest_path would use.
             candidates = G.get_edge_data(u, v).values()
             best = min(candidates, key=lambda d: d.get("length", float("inf")))
             length_m += best.get("length", 0.0)
+            travel_time_s += best.get("travel_time", 0.0) or 0.0
         return {
             "distance_km": length_m / 1000.0,
+            "time_min": travel_time_s / 60.0,
             "node_count": len(route),
         }
 
@@ -230,7 +261,15 @@ def astar_path(graph, orig_node, dest_node, weight="length"):
             vx, vy = nv.get("x", nv.get("lon")), nv.get("y", nv.get("lat"))
             if ux is None or uy is None or vx is None or vy is None:
                 return 0.0
-            return math.hypot(ux - vx, uy - vy)
+            # Edge lengths are metres, so this estimate must be in metres too.
+            lat1, lat2 = math.radians(uy), math.radians(vy)
+            delta_lat = lat2 - lat1
+            delta_lon = math.radians(vx - ux)
+            a = (
+                math.sin(delta_lat / 2) ** 2
+                + math.cos(lat1) * math.cos(lat2) * math.sin(delta_lon / 2) ** 2
+            )
+            return 6_371_008.8 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
         except Exception:
             return 0.0
 

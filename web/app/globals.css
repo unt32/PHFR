@@ -19,6 +19,9 @@ h2 { margin-bottom: 10px; color: #94a3b8; font-size: 12px; font-weight: 700; let
 .point-row i { width: 10px; height: 10px; border-radius: 50%; }
 .start-dot { background: #22c55e; }.end-dot { background: #ef4444; }
 button { margin-top: 10px; color: #f8fafc; font-weight: 650; }
+.route-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.route-mode .mode { margin-top: 0; min-height: 36px; background: transparent; color: #94a3b8; }
+.route-mode .mode.active { background: #243047; border-color: #22d3ee; color: #f8fafc; }
 button:disabled, .file-control:has(input:disabled) { cursor: wait; opacity: .48; }
 .primary { background: #0891b2; border-color: #22d3ee; }.primary:hover:not(:disabled) { background: #0e7490; }
 .secondary { background: transparent; }.secondary:hover:not(:disabled) { background: #243047; }

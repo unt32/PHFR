@@ -1,9 +1,9 @@
 "use client";
 
-import { ChangeEvent, useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import RouteMap, { MapPoint } from "../components/route-map";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_URL = "";
 
 type MapState = {
   source: string;
@@ -11,7 +11,7 @@ type MapState = {
   edges: number;
   bounds: [[number, number], [number, number]];
 };
-type RouteResult = { stats: { distance_km: number }; node_count: number };
+type RouteResult = { stats: { distance_km: number; time_min: number }; node_count: number };
 
 async function apiError(response: Response) {
   const body = await response.json().catch(() => ({}));
@@ -19,6 +19,9 @@ async function apiError(response: Response) {
 }
 
 function requestError(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message === "Moldova map is loading.") {
+    return "Карта Молдовы загружается на сервере...";
+  }
   if (error instanceof TypeError && error.message === "Failed to fetch") {
     return "API недоступен. Запустите FastAPI на порту 8000.";
   }
@@ -32,40 +35,49 @@ export default function Home() {
   const [end, setEnd] = useState<MapPoint | null>(null);
   const [mapState, setMapState] = useState<MapState | null>(null);
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
+  const [routeMode, setRouteMode] = useState<"fastest" | "shortest">("fastest");
   const [status, setStatus] = useState("Загрузите локальный файл OSM.");
   const [loading, setLoading] = useState(false);
+  const [selecting, setSelecting] = useState(false);
+  const [nextPoint, setNextPoint] = useState<"start" | "end">("start");
+  const selectionInFlight = useRef(false);
 
-  const uploadMap = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  useEffect(() => {
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
-    setLoading(true);
-    setStatus("Загружаем и строим дорожный граф...");
-    setStart(null);
-    setEnd(null);
-    setRoute(null);
-    setRouteResult(null);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const response = await fetch(`${API_URL}/api/maps`, { method: "POST", body: form });
-      if (!response.ok) throw new Error(await apiError(response));
-      const metadata: MapState = await response.json();
-      // The OSM raster basemap draws the roads. Sending every edge of a whole
-      // country as GeoJSON would freeze the browser for several minutes.
-      setRoads({ type: "FeatureCollection", features: [] });
-      setMapState(metadata);
-      setStatus("Карта готова. Выберите старт и финиш на карте.");
-    } catch (error) {
-      setStatus(requestError(error, "Не удалось загрузить карту."));
-    } finally {
-      setLoading(false);
-      event.target.value = "";
-    }
-  };
+    const loadDefaultMap = async () => {
+      setLoading(true);
+      setStatus("Подключаем карту Молдовы...");
+      try {
+        const response = await fetch(`${API_URL}/api/maps/current`);
+        if (!response.ok) throw new Error(await apiError(response));
+        const metadata: MapState = await response.json();
+        if (cancelled) return;
+        setRoads({ type: "FeatureCollection", features: [] });
+        setMapState(metadata);
+        setStatus("Карта Молдовы готова. Выберите старт и финиш.");
+      } catch (error) {
+        if (cancelled) return;
+        setStatus(requestError(error, "Ожидание сервера карты..."));
+        retryTimer = setTimeout(loadDefaultMap, 3000);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void loadDefaultMap();
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, []);
 
   const selectPoint = useCallback(async (lon: number, lat: number) => {
-    if (!roads || loading) return;
+    if (!roads || loading || selectionInFlight.current) return;
+    selectionInFlight.current = true;
+    setSelecting(true);
+    const pointType = nextPoint;
     try {
       const response = await fetch(`${API_URL}/api/nodes/nearest`, {
         method: "POST",
@@ -74,30 +86,35 @@ export default function Home() {
       });
       if (!response.ok) throw new Error(await apiError(response));
       const point: MapPoint = await response.json();
-      if (!start || end) {
+      if (pointType === "start") {
         setStart(point);
         setEnd(null);
         setRoute(null);
         setRouteResult(null);
+        setNextPoint("end");
         setStatus("Старт задан. Выберите финиш.");
       } else {
         setEnd(point);
+        setNextPoint("start");
         setStatus("Точки заданы. Можно строить маршрут.");
       }
     } catch (error) {
       setStatus(requestError(error, "Не удалось выбрать точку."));
+    } finally {
+      selectionInFlight.current = false;
+      setSelecting(false);
     }
-  }, [end, loading, roads, start]);
+  }, [loading, nextPoint, roads]);
 
   const buildRoute = async () => {
     if (!start || !end) return;
     setLoading(true);
-    setStatus("Ищем кратчайший маршрут...");
+    setStatus(routeMode === "fastest" ? "Ищем быстрый маршрут..." : "Ищем кратчайший маршрут...");
     try {
       const response = await fetch(`${API_URL}/api/routes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ start_node: start.node_id, end_node: end.node_id }),
+        body: JSON.stringify({ start_node: start.node_id, end_node: end.node_id, mode: routeMode }),
       });
       if (!response.ok) throw new Error(await apiError(response));
       const result = await response.json();
@@ -116,6 +133,7 @@ export default function Home() {
     setEnd(null);
     setRoute(null);
     setRouteResult(null);
+    setNextPoint("start");
     setStatus(roads ? "Выберите старт и финиш на карте." : "Загрузите локальный файл OSM.");
   };
 
@@ -124,11 +142,7 @@ export default function Home() {
       <aside className="sidebar">
         <div className="brand"><span>OSM</span><h1>Route Finder</h1></div>
         <section>
-          <h2>Карта</h2>
-          <label className="file-control">
-            <input type="file" accept=".osm,.pbf,.osm.pbf" onChange={uploadMap} disabled={loading} />
-            <span>{loading ? "Обработка..." : "Выбрать .osm / .pbf"}</span>
-          </label>
+          <h2>Карта Молдовы</h2>
           {mapState && <p className="meta">{mapState.nodes.toLocaleString()} узлов · {mapState.edges.toLocaleString()} рёбер</p>}
         </section>
         <section>
@@ -136,12 +150,17 @@ export default function Home() {
           <p className="hint">Нажмите на карту: сначала старт, затем финиш. Точки привязываются к ближайшей дороге.</p>
           <div className="point-row"><i className="start-dot" /> <span>{start ? "Старт выбран" : "Старт не выбран"}</span></div>
           <div className="point-row"><i className="end-dot" /> <span>{end ? "Финиш выбран" : "Финиш не выбран"}</span></div>
-          <button className="primary" onClick={buildRoute} disabled={!start || !end || loading}>Построить маршрут</button>
+          <div className="route-mode" role="group" aria-label="Режим маршрута">
+            <button className={routeMode === "fastest" ? "mode active" : "mode"} onClick={() => setRouteMode("fastest")}>Быстрее</button>
+            <button className={routeMode === "shortest" ? "mode active" : "mode"} onClick={() => setRouteMode("shortest")}>Короче</button>
+          </div>
+          <button className="primary" onClick={buildRoute} disabled={!start || !end || loading || selecting}>Построить маршрут</button>
           <button className="secondary" onClick={clear} disabled={!start && !end}>Очистить точки</button>
         </section>
         <section className="details">
           <h2>Детали</h2>
           <div><span>Длина</span><strong>{routeResult ? `${routeResult.stats.distance_km.toFixed(2)} км` : "-"}</strong></div>
+          <div><span>Время</span><strong>{routeResult ? `${routeResult.stats.time_min.toFixed(0)} мин` : "-"}</strong></div>
           <div><span>Узлов в пути</span><strong>{routeResult ? routeResult.node_count.toLocaleString() : "-"}</strong></div>
         </section>
         <p className="status" aria-live="polite">{status}</p>
