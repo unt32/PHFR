@@ -40,7 +40,7 @@ class MapEngine:
     # Loading
     # ------------------------------------------------------------------
 
-    def load_from_file(self, file_path: str):
+    def load_from_file(self, file_path: str, include_travel_times: bool = True):
         """Load a graph from a local .osm (XML) or .osm.pbf file (drive network)."""
         if not os.path.isfile(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
@@ -61,20 +61,26 @@ class MapEngine:
                 "Unsupported file type. Please choose a .osm or .osm.pbf file."
             )
 
-        self._finalize_graph(G, f"File: {os.path.basename(file_path)}")
+        self._finalize_graph(
+            G,
+            f"File: {os.path.basename(file_path)}",
+            include_travel_times=include_travel_times,
+        )
         return self.graph
 
     @staticmethod
     def _load_pbf(file_path: str):
-        """Convert a .osm.pbf file into a routable networkx graph via pyrosm."""
+        """Build a graph from ways carrying the OSM ``highway`` tag only."""
         from pyrosm import OSM  # optional dependency, imported lazily
 
         osm = OSM(file_path)
+        # Keep only drivable highway ways. This excludes OSM buildings, POIs,
+        # relations, and pedestrian-only paths that cannot be routed by car.
         nodes, edges = osm.get_network(nodes=True, network_type=NETWORK_TYPE)
         G = osm.to_graph(nodes, edges, graph_type="networkx")
         return G
 
-    def _finalize_graph(self, G, source_desc: str):
+    def _finalize_graph(self, G, source_desc: str, include_travel_times: bool = True):
         """Attach speed / travel-time edge attributes needed for time-based routing.
 
         Real-world OSM `maxspeed` tags are messy (missing, numeric-only,
@@ -87,8 +93,9 @@ class MapEngine:
         """
         self.graph = G
         self.graph_source = source_desc
-        self._add_speeds()
-        self._add_travel_times()
+        if include_travel_times:
+            self._add_speeds()
+            self._add_travel_times()
 
     def _add_speeds(self, default_kph: float = 30.0):
         self._sanitize_maxspeed_tags()

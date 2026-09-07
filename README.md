@@ -1,5 +1,30 @@
 # OSM Route Finder
 
+## Web interface
+
+The desktop UI remains available, and the same Python routing engine can now
+be used through a Next.js interface. Start the API and frontend in separate
+terminals:
+
+```bash
+cd PHFR
+py -3.13 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements-api.txt
+.venv\Scripts\python -m uvicorn api:app --reload
+```
+
+Use an official CPython 3.13 x64 installation, not the MSYS2 Python runtime.
+
+```bash
+cd PHFR/web
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`. The browser uploads a local `.osm` or
+`.osm.pbf` file to FastAPI; PBF parsing and route calculation stay in Python.
+The API only sends road geometry and route results to the frontend.
+
 A desktop application for loading OpenStreetMap data from a local file,
 visualizing the street network, and finding the shortest path between two
 points — built with `osmnx` + `networkx` for the routing engine and PyQt6 +
