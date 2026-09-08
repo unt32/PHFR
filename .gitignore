@@ -10,3 +10,11 @@ venv/
 *.pickle.tmp
 moldova.osm.pbf
 moldova.osm.drive.fastest.graph.pickle
+
+moldova.osm.pbf
+
+moldova.osm.drive.fastest.graph.pickle
+moldova.osm.pbf
+moldova.osm.drive.fastest.graph.pickle
+*.osm.pbf
+*.graph.pickle
