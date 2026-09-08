@@ -8,3 +8,5 @@ venv/
 .venv/
 *.drive.graph.pickle
 *.pickle.tmp
+moldova.osm.pbf
+moldova.osm.drive.fastest.graph.pickle
