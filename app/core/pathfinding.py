@@ -57,12 +57,18 @@ def parse_maxspeed_kph(raw):
     return GraphAttributeAnnotator.parse_maxspeed_kph(raw)
 
 
-def speed_kph_for_edge(edge_data, speed_by_highway=None, default_kph=UNIVERSAL_DEFAULT_SPEED_KPH):
+def speed_kph_for_edge(
+    edge_data, speed_by_highway=None, default_kph=UNIVERSAL_DEFAULT_SPEED_KPH
+):
     """Backward-compatible wrapper for resolving an edge's speed."""
-    return GraphAttributeAnnotator(speed_by_highway, default_kph).speed_kph_for_edge(edge_data)
+    return GraphAttributeAnnotator(speed_by_highway, default_kph).speed_kph_for_edge(
+        edge_data
+    )
 
 
-def add_travel_times(graph, speed_by_highway=None, default_kph=UNIVERSAL_DEFAULT_SPEED_KPH):
+def add_travel_times(
+    graph, speed_by_highway=None, default_kph=UNIVERSAL_DEFAULT_SPEED_KPH
+):
     """Backward-compatible wrapper for graph edge annotation."""
     return GraphAttributeAnnotator(speed_by_highway, default_kph).annotate(graph)
 
@@ -100,6 +106,7 @@ def _node_lonlat(graph, node):
 # A*
 # ---------------------------------------------------------------------------
 
+
 def _min_weight_edge_data(graph, u, v, weight):
     """Return the parallel edge (u -> v) with the smallest `weight`.
 
@@ -108,6 +115,7 @@ def _min_weight_edge_data(graph, u, v, weight):
     """
     edge_data = graph[u][v]
     if graph.is_multigraph():
+
         def safe_weight(data):
             try:
                 value = float(data[weight])
@@ -119,7 +127,56 @@ def _min_weight_edge_data(graph, u, v, weight):
     return edge_data
 
 
-def astar_path(graph, source, target, weight="travel_time", max_speed_mps=MAX_PLAUSIBLE_SPEED_MPS):
+def dijkstra_path(graph, source, target, weight="travel_time"):
+    if source not in graph:
+        raise KeyError(f"Source node not in graph: {source!r}")
+    if target not in graph:
+        raise KeyError(f"Target node not in graph: {target!r}")
+    if source == target:
+        return [source]
+
+    counter = 0  # heapq tie-breaker so node ids are never compared directly
+    open_set = [(0.0, counter, source)]
+    came_from = {}
+    cost = {source: 0.0}
+    visited = set()
+
+    while open_set:
+        _, _, current = heapq.heappop(open_set)
+
+        if current == target:
+            path = [current]
+            while current in came_from:
+                current = came_from[current]
+                path.append(current)
+            path.reverse()
+            return path
+
+        if current in visited:
+            continue
+        visited.add(current)
+
+        for neighbor in graph[current]:
+            if neighbor in visited:
+                continue
+
+            edge_data = _min_weight_edge_data(graph, current, neighbor, weight)
+            new_cost = cost[current] + validate_edge_weight(
+                edge_data, weight, current, neighbor
+            )
+
+            if new_cost < cost.get(neighbor, float("inf")):
+                came_from[neighbor] = current
+                cost[neighbor] = new_cost
+                counter += 1
+                heapq.heappush(open_set, (new_cost, counter, neighbor))
+
+    raise RouteNotFoundError(f"No path exists between {source!r} and {target!r}.")
+
+
+def astar_path(
+    graph, source, target, weight="travel_time", max_speed_mps=MAX_PLAUSIBLE_SPEED_MPS
+):
     """A* shortest path from `source` to `target`, minimizing `weight`.
 
     Parameters
@@ -226,6 +283,8 @@ def astar_path(graph, source, target, weight="travel_time", max_speed_mps=MAX_PL
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g
                 counter += 1
-                heapq.heappush(open_set, (tentative_g + heuristic(neighbor), counter, neighbor))
+                heapq.heappush(
+                    open_set, (tentative_g + heuristic(neighbor), counter, neighbor)
+                )
 
     raise RouteNotFoundError(f"No path exists between {source!r} and {target!r}.")

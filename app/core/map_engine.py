@@ -71,12 +71,18 @@ class MapEngine:
         )
         return self.graph
 
-    def load_from_graph(self, graph, source_desc: str, include_travel_times: bool = True):
+    def load_from_graph(
+        self, graph, source_desc: str, include_travel_times: bool = True
+    ):
         """Publish an already-built graph (e.g. one read back from a pickle cache)."""
-        self._finalize_graph(graph, source_desc, include_travel_times=include_travel_times)
+        self._finalize_graph(
+            graph, source_desc, include_travel_times=include_travel_times
+        )
         return self.graph
 
-    def _finalize_graph(self, graph, source_desc: str, include_travel_times: bool = True):
+    def _finalize_graph(
+        self, graph, source_desc: str, include_travel_times: bool = True
+    ):
         """Annotate graph attributes, then publish the graph as ready.
 
         ``include_travel_times`` is ignored to keep the legacy signature while
@@ -132,24 +138,19 @@ class MapEngine:
     # ------------------------------------------------------------------
 
     def compute_route(self, orig_node, dest_node, weight: str = "travel_time"):
-        """Compute the best path between two nodes.
-
-        The app exposes a single, unified routing algorithm (A*, weighted by
-        estimated travel time in seconds) rather than letting the caller pick
-        between a "fastest" and "shortest" mode - `weight` is kept as a
-        parameter for internal flexibility/testing, but every caller in this
-        codebase relies on the `travel_time` default.
-        """
+        """Compute the best path between two nodes using A*."""
         if not self.has_graph():
             raise RuntimeError("No graph loaded yet.")
         if orig_node == dest_node:
             raise RouteNotFoundError("Start and end points are the same node.")
+
         try:
             route = astar_path(self.graph, orig_node, dest_node, weight=weight)
         except RouteNotFoundError:
             raise
         except (KeyError, MissingCoordinatesError, InvalidEdgeWeightError) as exc:
-            raise RouteNotFoundError(str(exc)) from exc
+            raise RouteNotFoundError(f"Could not compute route: {exc}") from exc
+
         return route
 
     def route_stats(self, route):
