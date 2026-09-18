@@ -15,18 +15,33 @@ h2 { margin-bottom: 10px; color: #94a3b8; font-size: 12px; font-weight: 700; let
 .file-control input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .meta, .hint, .status { color: #94a3b8; font-size: 13px; line-height: 1.45; }
 .meta { margin-top: 9px; }
-.point-row { display: flex; align-items: center; gap: 9px; margin: 9px 0; font-size: 14px; }
-.point-row i { width: 10px; height: 10px; border-radius: 50%; }
-.start-dot { background: #22c55e; }.end-dot { background: #ef4444; }
 button { margin-top: 10px; color: #f8fafc; font-weight: 650; }
-.route-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
-.route-mode .mode { margin-top: 0; min-height: 36px; background: transparent; color: #94a3b8; }
-.route-mode .mode.active { background: #243047; border-color: #22d3ee; color: #f8fafc; }
+
+/* Start/finish point selection buttons */
+.point-controls { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.point-btn { justify-content: flex-start; gap: 10px; margin-top: 0; background: #243047; color: #94a3b8; border-color: #475569; font-weight: 600; transition: border-color .15s, color .15s, background .15s; }
+.point-btn:hover:not(:disabled) { border-color: #64748b; color: #f8fafc; }
+.point-btn i { width: 10px; height: 10px; border-radius: 50%; background: #475569; flex-shrink: 0; transition: background .15s, opacity .15s; }
+
+/* Point Set state */
+.point-btn.is-set { color: #f8fafc; border-color: #475569; }
+.point-btn.is-set i.start-dot { background: #22c55e; }
+.point-btn.is-set i.end-dot { background: #ef4444; }
+
+/* Active/Selecting state */
+.point-btn.is-selecting { color: #f8fafc; border-color: #22d3ee; background: #1e293b; animation: point-btn-pulse 1.2s ease-in-out infinite; }
+.point-btn.is-selecting i { background: #22d3ee; animation: point-dot-pulse 1.2s ease-in-out infinite; }
+@keyframes point-btn-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, .35); } 50% { box-shadow: 0 0 0 5px rgba(34, 211, 238, 0); } }
+@keyframes point-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
 button:disabled, .file-control:has(input:disabled) { cursor: wait; opacity: .48; }
-.primary { background: #0891b2; border-color: #22d3ee; }.primary:hover:not(:disabled) { background: #0e7490; }
-.secondary { background: transparent; }.secondary:hover:not(:disabled) { background: #243047; }
+.primary { background: #0891b2; border-color: #22d3ee; }
+.primary:hover:not(:disabled) { background: #0e7490; }
+.secondary { background: transparent; }
+.secondary:hover:not(:disabled) { background: #243047; }
 .details { padding-top: 18px; border-top: 1px solid #334155; }
 .details div { display: flex; justify-content: space-between; padding: 7px 0; color: #94a3b8; font-size: 14px; }
-.details strong { color: #f8fafc; }.status { margin-top: auto; }
+.details strong { color: #f8fafc; }
+.status { margin-top: auto; }
 .map { width: 100%; min-height: 320px; background: #0f172a; }
-@media (max-width: 760px) { .app-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(55vh, 1fr); height: auto; min-height: 100vh; }.sidebar { gap: 16px; padding: 16px; overflow: visible; }.status { margin-top: 0; }.map { min-height: 55vh; } }
+@media (max-width: 760px) { .app-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(55vh, 1fr); height: auto; min-height: 100vh; } .sidebar { gap: 16px; padding: 16px; overflow: visible; } .status { margin-top: 0; } .map { min-height: 55vh; } }

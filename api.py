@@ -8,7 +8,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 import logging
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -44,7 +44,6 @@ class Coordinate(BaseModel):
 class RouteRequest(BaseModel):
     start_node: Any
     end_node: Any
-    mode: Literal["shortest", "fastest"] = "fastest"
 
 
 def _edge_coordinates(graph, u, v, data):
@@ -271,8 +270,9 @@ def route(request: RouteRequest):
         if not engine.has_graph():
             raise HTTPException(status_code=409, detail="Load a map first.")
         try:
-            weight = "travel_time" if request.mode == "fastest" else "length"
-            nodes = engine.compute_route(request.start_node, request.end_node, weight=weight)
+            # A single, unified routing algorithm - always the fastest route
+            # by estimated travel time. There is no shortest/fastest choice.
+            nodes = engine.compute_route(request.start_node, request.end_node)
             stats = engine.route_stats(nodes)
         except RouteNotFoundError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -203,12 +203,14 @@ class MapEngine:
     # Routing
     # ------------------------------------------------------------------
 
-    def compute_route(self, orig_node, dest_node, weight: str = "length"):
-        """Compute the shortest path between two nodes.
+    def compute_route(self, orig_node, dest_node, weight: str = "travel_time"):
+        """Compute the best path between two nodes.
 
-        `weight` should be 'length' (meters, i.e. shortest distance) or
-        'travel_time' (seconds, i.e. fastest route). networkx's `shortest_path`
-        uses Dijkstra's algorithm under the hood for weighted graphs.
+        The app exposes a single, unified routing algorithm (A*, weighted by
+        estimated travel time in seconds) rather than letting the caller pick
+        between a "fastest" and "shortest" mode - `weight` is kept as a
+        parameter for internal flexibility/testing, but every caller in this
+        codebase relies on the `travel_time` default.
         """
         if not self.has_graph():
             raise RuntimeError("No graph loaded yet.")
