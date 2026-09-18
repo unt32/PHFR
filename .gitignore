@@ -1,20 +1,26 @@
-*.osm
-*.pyc
-
-data/
-cache/
+# Byte-compiled / Python cache files
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environments
 venv/
 .venv/
-*.drive.graph.pickle
-*.pickle.tmp
-moldova.osm.pbf
-moldova.osm.drive.fastest.graph.pickle
+env/
+.env
+.env.*
+!.env.example
 
-moldova.osm.pbf
+# Data & cache directories
+data/
+cache/
 
-moldova.osm.drive.fastest.graph.pickle
-moldova.osm.pbf
-moldova.osm.drive.fastest.graph.pickle
+# Heavy datasets & generated graph files
+*.osm
 *.osm.pbf
+*.pickle*
 *.graph.pickle
+
+# Node dependencies
+node_modules/

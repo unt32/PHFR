@@ -15,6 +15,32 @@ type Props = {
   onMapClick: (lon: number, lat: number) => void;
 };
 
+// Walks any GeoJSON geometry type and extends a LngLatBounds with every
+// coordinate found. Handles the geometry types a route response could
+// plausibly use (LineString / MultiLineString), plus Point/Polygon for safety.
+function extendBoundsWithGeometry(bounds: maplibregl.LngLatBounds, geometry: GeoJSON.Geometry | null | undefined) {
+  if (!geometry) return;
+  switch (geometry.type) {
+    case "Point":
+      bounds.extend(geometry.coordinates as [number, number]);
+      break;
+    case "MultiPoint":
+    case "LineString":
+      for (const coord of geometry.coordinates) bounds.extend(coord as [number, number]);
+      break;
+    case "MultiLineString":
+    case "Polygon":
+      for (const line of geometry.coordinates) for (const coord of line) bounds.extend(coord as [number, number]);
+      break;
+    case "MultiPolygon":
+      for (const polygon of geometry.coordinates) for (const line of polygon) for (const coord of line) bounds.extend(coord as [number, number]);
+      break;
+    case "GeometryCollection":
+      for (const g of geometry.geometries) extendBoundsWithGeometry(bounds, g);
+      break;
+  }
+}
+
 export default function RouteMap({ roads, route, start, end, bounds, onMapClick }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
@@ -66,6 +92,7 @@ export default function RouteMap({ roads, route, start, end, bounds, onMapClick 
     instance.fitBounds(bounds, { padding: 72, duration: 0 });
   }, [bounds]);
 
+  // Render the route line, then auto-fit the viewport to its extent.
   useEffect(() => {
     const instance = map.current;
     if (!instance || !instance.isStyleLoaded()) return;
@@ -76,6 +103,14 @@ export default function RouteMap({ roads, route, start, end, bounds, onMapClick 
       instance.addSource("route", { type: "geojson", data });
       instance.addLayer({ id: "route", type: "line", source: "route", paint: { "line-color": "#06b6d4", "line-width": 5, "line-opacity": 0.95 } });
     }
+
+    if (!route) return;
+    const routeBounds = new maplibregl.LngLatBounds();
+    extendBoundsWithGeometry(routeBounds, route.geometry);
+    if (routeBounds.isEmpty()) return;
+
+    // maxZoom keeps very short routes from zooming in absurdly close.
+    instance.fitBounds(routeBounds, { padding: 72, duration: 600, maxZoom: 16 });
   }, [route]);
 
   useEffect(() => {
