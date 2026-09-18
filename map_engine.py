@@ -14,12 +14,10 @@ import numpy as np
 import osmnx as ox
 from scipy.spatial import cKDTree
 
+from edge_weights import GraphAttributeAnnotator, InvalidEdgeWeightError
 from pathfinding import (
-    DEFAULT_SPEED_BY_HIGHWAY_KPH,
-    UNIVERSAL_DEFAULT_SPEED_KPH,
     MissingCoordinatesError,
     RouteNotFoundError,
-    add_travel_times,
     astar_path,
 )
 
@@ -45,13 +43,18 @@ class MapEngine:
         self._nearest_node_ids = None
         self._nearest_node_tree = None
         self._longitude_scale = 1.0
+        self._attribute_annotator = GraphAttributeAnnotator()
 
     # ------------------------------------------------------------------
     # Loading
     # ------------------------------------------------------------------
 
     def load_from_file(self, file_path: str, include_travel_times: bool = True):
-        """Load a graph from a local .osm (XML) or .osm.pbf file (drive network)."""
+        """Load and annotate a graph from a local .osm or .osm.pbf file.
+
+        ``include_travel_times`` is retained for caller compatibility; every
+        graph entering the engine is now annotated for routing readiness.
+        """
         if not os.path.isfile(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
 
@@ -96,23 +99,16 @@ class MapEngine:
         return G
 
     def _finalize_graph(self, G, source_desc: str, include_travel_times: bool = True):
-        """Attach speed / travel-time edge attributes needed for time-based routing.
+        """Annotate graph attributes, then publish the graph as ready.
 
-        `pathfinding.add_travel_times` does its own `maxspeed` parsing
-        (handling missing/NaN/list/"50 km/h"-style values directly), so it
-        never needs osmnx's `add_edge_speeds`/`add_edge_travel_times` or a
-        pre-sanitizing pass over the tags.
+        ``include_travel_times`` is ignored to keep the legacy signature while
+        enforcing a single invariant: any graph held by MapEngine has edge
+        ``length``, ``speed_kph``, and ``travel_time`` attributes.
         """
-        self.graph = G
+        self.graph = self._attribute_annotator.annotate(G)
         self.graph_source = source_desc
         self._nearest_node_ids = None
         self._nearest_node_tree = None
-        if include_travel_times:
-            add_travel_times(
-                self.graph,
-                speed_by_highway=DEFAULT_SPEED_BY_HIGHWAY_KPH,
-                default_kph=UNIVERSAL_DEFAULT_SPEED_KPH,
-            )
 
     # ------------------------------------------------------------------
     # Geometry / lookups
@@ -174,7 +170,7 @@ class MapEngine:
             route = astar_path(self.graph, orig_node, dest_node, weight=weight)
         except RouteNotFoundError:
             raise
-        except (KeyError, MissingCoordinatesError) as exc:
+        except (KeyError, MissingCoordinatesError, InvalidEdgeWeightError) as exc:
             raise RouteNotFoundError(str(exc)) from exc
         return route
 

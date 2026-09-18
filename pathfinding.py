@@ -6,14 +6,10 @@ Self-contained A* pathfinding module for time-weighted road-network routing.
 Works with any networkx Graph/DiGraph/MultiGraph/MultiDiGraph (e.g. an
 OSMnx-style graph) where:
   - each node carries 'x' (lon) / 'y' (lat) attributes (or 'lon'/'lat')
-  - each edge carries 'length' (metres) and, optionally, 'maxspeed' /
-    'highway' OSM tags
+  - each edge carries precomputed route weights such as 'travel_time'
 
 Public API
 ----------
-parse_maxspeed_kph(raw)                    -> float | None
-speed_kph_for_edge(edge_data, ...)         -> float
-add_travel_times(graph, ...)               -> graph (mutated in-place)
 haversine_distance_m(lat1, lon1, lat2, lon2) -> float
 astar_path(graph, source, target, ...)     -> list[node_id]
 
@@ -25,7 +21,16 @@ MissingCoordinatesError  - source/target node has no usable lon/lat
 
 import heapq
 import math
-import re
+
+from edge_weights import (
+    DEFAULT_SPEED_BY_HIGHWAY_KPH,
+    MAX_PLAUSIBLE_SPEED_MPS,
+    MAX_PLAUSIBLE_SPEED_KPH,
+    UNIVERSAL_DEFAULT_SPEED_KPH,
+    GraphAttributeAnnotator,
+    InvalidEdgeWeightError,
+    validate_edge_weight,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -40,127 +45,19 @@ class MissingCoordinatesError(Exception):
     """Raised when a node lacks the lon/lat data the A* heuristic needs."""
 
 
-# ---------------------------------------------------------------------------
-# Speeds
-# ---------------------------------------------------------------------------
-
-# Typical speeds (km/h) by OSM `highway` road class. Used whenever an edge's
-# `maxspeed` tag is missing or unparseable.
-DEFAULT_SPEED_BY_HIGHWAY_KPH = {
-    "motorway": 110,
-    "motorway_link": 80,
-    "trunk": 90,
-    "trunk_link": 70,
-    "primary": 60,
-    "primary_link": 50,
-    "secondary": 50,
-    "secondary_link": 40,
-    "tertiary": 40,
-    "tertiary_link": 30,
-    "unclassified": 20,
-    "residential": 20,
-    "living_street": 10,
-    "service": 10,
-    "track": 5,
-    "path": 3,
-}
-
-# Fallback for any `highway` value not covered above (or absent entirely).
-# Guarantees every edge ends up with a valid, non-zero speed.
-UNIVERSAL_DEFAULT_SPEED_KPH = 30.0
-
-# Fastest speed any edge in the network could plausibly have. Used to turn
-# straight-line distance into a travel-time *lower bound* for the A*
-# heuristic, so it never overestimates true remaining travel time
-# (admissibility) and is consistent along every edge.
-MAX_PLAUSIBLE_SPEED_KPH = 130.0
-MAX_PLAUSIBLE_SPEED_MPS = MAX_PLAUSIBLE_SPEED_KPH / 3.6
-
-_NUMBER_RE = re.compile(r"(\d+(?:\.\d+)?)")
-
-
 def parse_maxspeed_kph(raw):
-    """Parse an OSM-style `maxspeed` value into a float km/h, or None.
-
-    Handles the messy shapes `maxspeed` shows up in once loaded from OSM:
-      - plain numeric strings: "50"
-      - strings with units: "50 km/h", "30 mph", "50kmh"
-      - non-numeric placeholders: "walk", "none", "signals", "variable"
-      - lists of any of the above (a way tagged with multiple limits) ->
-        the *minimum* parsed value is used, since that's the binding limit
-      - NaN / None / already-numeric (int/float) values
-
-    Returns None if nothing usable could be extracted, so the caller can
-    fall back to a road-class based default instead.
-    """
-    if raw is None:
-        return None
-
-    if isinstance(raw, float) and math.isnan(raw):
-        return None
-
-    if isinstance(raw, (int, float)):
-        value = float(raw)
-        return value if value > 0 else None
-
-    if isinstance(raw, (list, tuple, set)):
-        parsed = [parse_maxspeed_kph(item) for item in raw]
-        parsed = [p for p in parsed if p is not None]
-        return min(parsed) if parsed else None
-
-    if isinstance(raw, str):
-        text = raw.strip().lower()
-        if not text or text in {"none", "signals", "walk", "variable"}:
-            return None
-        match = _NUMBER_RE.search(text)
-        if not match:
-            return None
-        value = float(match.group(1))
-        if "mph" in text:
-            value *= 1.60934
-        # Anything else ("km/h", "kmh", "kph", or a bare number) is already km/h.
-        return value if value > 0 else None
-
-    return None
+    """Backward-compatible wrapper for maxspeed parsing."""
+    return GraphAttributeAnnotator.parse_maxspeed_kph(raw)
 
 
 def speed_kph_for_edge(edge_data, speed_by_highway=None, default_kph=UNIVERSAL_DEFAULT_SPEED_KPH):
-    """Resolve one edge's travel speed in km/h.
-
-    Priority: parsed `maxspeed` tag -> road-class default for its `highway`
-    tag -> universal fallback. Always returns a positive, non-zero value.
-    """
-    speed_by_highway = speed_by_highway or DEFAULT_SPEED_BY_HIGHWAY_KPH
-
-    parsed = parse_maxspeed_kph(edge_data.get("maxspeed"))
-    if parsed:
-        return parsed
-
-    highway = edge_data.get("highway")
-    highways = highway if isinstance(highway, (list, tuple)) else [highway]
-    for h in highways:
-        if h in speed_by_highway:
-            return speed_by_highway[h]
-
-    return default_kph
+    """Backward-compatible wrapper for resolving an edge's speed."""
+    return GraphAttributeAnnotator(speed_by_highway, default_kph).speed_kph_for_edge(edge_data)
 
 
 def add_travel_times(graph, speed_by_highway=None, default_kph=UNIVERSAL_DEFAULT_SPEED_KPH):
-    """Attach `speed_kph` and `travel_time` (seconds) to every edge, in-place.
-
-        travel_time = length_in_meters / speed_in_meters_per_second
-
-    An edge with no usable `length` is treated as 0 m (travel_time 0 s)
-    rather than raising - a single malformed length shouldn't block routing
-    on every other edge. Returns the same graph object for chaining.
-    """
-    for _, _, data in graph.edges(data=True):
-        speed_kph = speed_kph_for_edge(data, speed_by_highway, default_kph)
-        speed_mps = speed_kph * 1000.0 / 3600.0
-        length_m = data.get("length") or 0.0
-        data["speed_kph"] = speed_kph
-        data["travel_time"] = length_m / speed_mps if speed_mps > 0 else 0.0
-    return graph
+    """Backward-compatible wrapper for graph edge annotation."""
+    return GraphAttributeAnnotator(speed_by_highway, default_kph).annotate(graph)
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +101,14 @@ def _min_weight_edge_data(graph, u, v, weight):
     """
     edge_data = graph[u][v]
     if graph.is_multigraph():
-        return min(edge_data.values(), key=lambda d: d.get(weight, float("inf")))
+        def safe_weight(data):
+            try:
+                value = float(data[weight])
+            except (KeyError, TypeError, ValueError):
+                return float("inf")
+            return value if math.isfinite(value) and value >= 0 else float("inf")
+
+        return min(edge_data.values(), key=safe_weight)
     return edge_data
 
 
@@ -215,8 +119,8 @@ def astar_path(graph, source, target, weight="travel_time", max_speed_mps=MAX_PL
     ----------
     graph : networkx Graph / DiGraph / MultiGraph / MultiDiGraph
         Nodes need 'x'/'y' (or 'lon'/'lat'). Edges need the `weight`
-        attribute - call `add_travel_times(graph)` first if using the
-        default weight="travel_time".
+        attribute. Graphs loaded through MapEngine are annotated before
+        routing.
     source, target : node id
     weight : str
         Edge attribute to minimize.
@@ -236,8 +140,10 @@ def astar_path(graph, source, target, weight="travel_time", max_speed_mps=MAX_PL
     Raises
     ------
     KeyError
-        `source`/`target` isn't in the graph, or an edge on the frontier is
-        missing the `weight` attribute (run `add_travel_times` first).
+        `source` or `target` is not in the graph.
+    InvalidEdgeWeightError
+        An edge on the frontier is missing the requested `weight` attribute or
+        has a non-finite/negative value.
     MissingCoordinatesError
         `source` or `target` lacks lon/lat coordinates, which the
         heuristic is measured against.
@@ -305,12 +211,9 @@ def astar_path(graph, source, target, weight="travel_time", max_speed_mps=MAX_PL
                 continue
 
             edge_data = _min_weight_edge_data(graph, current, neighbor, weight)
-            if weight not in edge_data:
-                raise KeyError(
-                    f"Edge {current!r} -> {neighbor!r} has no '{weight}' attribute; "
-                    "call add_travel_times(graph) first if using weight='travel_time'."
-                )
-            tentative_g = g_score[current] + edge_data[weight]
+            tentative_g = g_score[current] + validate_edge_weight(
+                edge_data, weight, current, neighbor
+            )
 
             if tentative_g < g_score.get(neighbor, float("inf")):
                 came_from[neighbor] = current

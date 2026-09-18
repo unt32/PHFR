@@ -135,7 +135,7 @@ def _load_default_map():
             engine._finalize_graph(
                 graph,
                 f"Cached file: {DEFAULT_MAP_FILE.name}",
-                include_travel_times=False,
+                include_travel_times=True,
             )
             logger.info("Cached Moldova graph is ready")
             return _map_metadata(check_ready=False)
