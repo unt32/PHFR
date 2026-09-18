@@ -75,9 +75,18 @@ export default function Home() {
 
   // Toggling a point button arms selection mode for that point; clicking the
   // already-active button cancels selection mode instead of restarting it.
+  // Entering selection mode immediately clears any existing route/results,
+  // since the user is about to change one of the endpoints.
   const toggleSelecting = (target: PointTarget) => {
     if (loading) return;
-    setSelectingTarget((current) => (current === target ? null : target));
+    setSelectingTarget((current) => {
+      const next = current === target ? null : target;
+      if (next !== null) {
+        setRoute(null);
+        setRouteResult(null);
+      }
+      return next;
+    });
   };
 
   const selectPoint = useCallback(
@@ -93,8 +102,6 @@ export default function Home() {
         });
         if (!response.ok) throw new Error(await apiError(response));
         const point: MapPoint = await response.json();
-        setRoute(null);
-        setRouteResult(null);
         if (target === "start") {
           setStart(point);
           setStatus(end ? "Старт обновлён. Можно строить маршрут." : "Старт задан. Выберите финиш.");
