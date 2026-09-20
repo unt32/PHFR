@@ -11,7 +11,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from dotenv import load_dotenv
 
+load_dotenv()
 # Project root: the parent of this ``app`` package, i.e. where
 # moldova.osm.pbf, start.sh and requirements-api.txt live.
 BASE_DIR = Path(__file__).resolve().parent.parent
