@@ -4,13 +4,13 @@ ARG PYTHON_VERSION=3.13
 FROM python:${PYTHON_VERSION}-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+  PYTHONUNBUFFERED=1 \
+  PIP_NO_CACHE_DIR=1
 
 # Build tools are needed in case pyrosm/shapely/etc. have no wheel for this Python.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends build-essential libgeos-dev libspatialindex-dev \
- && rm -rf /var/lib/apt/lists/*
+  && apt-get install -y --no-install-recommends build-essential libgeos-dev libspatialindex-dev \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -23,11 +23,15 @@ COPY app ./app
 # (MapService writes a fresh pickle cache when the .pbf is newer).
 ARG UID=1000
 RUN useradd --create-home --uid ${UID} appuser \
- && mkdir -p /data && chown appuser /data /app
+  && mkdir -p /data && chown appuser /data /app
 USER appuser
 
-ENV OSM_PBF_PATH=/data/moldova.osm.pbf \
-    LOG_LEVEL=INFO
+ARG OSM_PBF_PATH \
+  CORS_ORIGINS\
+  LOG_LEVEL
+ENV OSM_PBF_PATH=$OSM_PBF_PATH  \
+  LOG_LEVEL=$LOG_LEVEL  \
+  CORS_ORIGINS=$CORS_ORIGINS
 
 EXPOSE 8000
 
