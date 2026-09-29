@@ -63,7 +63,7 @@ class Settings:
         object.__setattr__(
             self,
             "graph_cache_file",
-            self.map_file.with_suffix(".drive.fastest.graph.pickle"),
+            self.map_file.with_name(self.map_file.name + ".drive.fastest.graph.pickle"),
         )
 
 

@@ -1,0 +1,36 @@
+services:
+  api:
+    healthcheck:
+          test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/maps/current')"]
+          interval: 10s
+          timeout: 5s
+          retries: 60
+          start_period: 60s
+    build:
+      context: .
+      args:
+        UID: ${UID:-1000}
+    image: phfr-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      OSM_PBF_PATH: /data/${OSM_PBF_PATH:-map.osm.pbf}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+    - ./data:/data
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        API_INTERNAL_URL: http://api:8000
+    image: phfr-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
