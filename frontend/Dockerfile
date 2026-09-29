@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Next.js frontend. Build context is ./web
+# Next.js frontend. Build context is ./frontend
 FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -27,6 +27,7 @@ ENV NODE_ENV=production \
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/.next ./.next
+COPY --from=build /app/next.config.mjs ./next.config.mjs
 # COPY --from=build /app/public ./public
 USER node
 EXPOSE 3000

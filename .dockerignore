@@ -4,12 +4,10 @@ __pycache__
 *.pyc
 .pytest_cache
 node_modules
-package.json
-package-lock.json
-web
+data
 results
-tests
-scripts
-*.pbf
-*.pickle
+backend/results
+backend/tests
+backend/scripts
 .env
+.env.*

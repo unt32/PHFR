@@ -13,10 +13,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
-# Project root: the parent of this ``app`` package, i.e. where
-# moldova.osm.pbf, start.sh and requirements-api.txt live.
-BASE_DIR = Path(__file__).resolve().parent.parent
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = BACKEND_DIR.parent
+
+if (BACKEND_DIR / ".env").is_file():
+    load_dotenv(BACKEND_DIR / ".env")
+elif (ROOT_DIR / ".env").is_file():
+    load_dotenv(ROOT_DIR / ".env")
+else:
+    load_dotenv()
 
 # Fixed bounds keep startup from scanning every node in the 1+ GB cached
 # graph just to compute a bounding box.
@@ -25,12 +30,30 @@ _DEFAULT_BOUNDS: list[list[float]] = [[26.6, 45.4], [30.2, 48.6]]
 _DEFAULT_CORS_ORIGINS: list[str] = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "http://172.20.10.2:3000",
 ]
 
 
 def _default_map_file() -> Path:
-    return Path(os.getenv("OSM_PBF_PATH", BASE_DIR / "moldova.osm.pbf"))
+    raw = os.getenv("OSM_PBF_PATH")
+    if raw:
+        path = Path(raw)
+        if path.is_file():
+            return path
+        for base in (BACKEND_DIR, ROOT_DIR, ROOT_DIR / "data", BACKEND_DIR / "data"):
+            candidate = base / path
+            if candidate.is_file():
+                return candidate
+        return path
+
+    for candidate in (
+        ROOT_DIR / "data" / "moldova.osm.pbf",
+        BACKEND_DIR / "data" / "moldova.osm.pbf",
+        ROOT_DIR / "moldova.osm.pbf",
+        BACKEND_DIR / "moldova.osm.pbf",
+    ):
+        if candidate.is_file():
+            return candidate
+    return ROOT_DIR / "data" / "moldova.osm.pbf"
 
 
 def _cors_origins() -> list[str]:
@@ -43,6 +66,14 @@ def _cors_origins() -> list[str]:
 
 
 def _bounds() -> list[list[float]]:
+    raw = os.getenv("MAP_BOUNDS")
+    if raw:
+        try:
+            coords = [float(c.strip()) for c in raw.split(",")]
+            if len(coords) == 4:
+                return [[coords[0], coords[1]], [coords[2], coords[3]]]
+        except ValueError:
+            pass
     return [list(pair) for pair in _DEFAULT_BOUNDS]
 
 

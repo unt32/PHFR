@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import RouteMap, { MapPoint } from "../components/route-map";
 
-const API_URL = "";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 type MapState = {
   source: string;
@@ -20,11 +20,11 @@ async function apiError(response: Response) {
 }
 
 function requestError(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message === "Moldova map is loading.") {
-    return "Карта Молдовы загружается на сервере...";
+  if (error instanceof Error && error.message.toLowerCase().includes("loading")) {
+    return "Карта загружается на сервере...";
   }
   if (error instanceof TypeError && error.message === "Failed to fetch") {
-    return "API недоступен. Запустите FastAPI на порту 8000.";
+    return "API недоступен. Проверьте подключение к серверу.";
   }
   return error instanceof Error ? error.message : fallback;
 }
@@ -48,7 +48,7 @@ export default function Home() {
 
     const loadDefaultMap = async () => {
       setLoading(true);
-      setStatus("Подключаем карту Молдовы...");
+      setStatus("Подключаем карту...");
       try {
         const response = await fetch(`${API_URL}/api/maps/current`);
         if (!response.ok) throw new Error(await apiError(response));
@@ -56,7 +56,7 @@ export default function Home() {
         if (cancelled) return;
         setRoads({ type: "FeatureCollection", features: [] });
         setMapState(metadata);
-        setStatus('Карта Молдовы готова. Нажмите "Задать старт", затем кликните на карте.');
+        setStatus('Карта готова. Нажмите "Задать старт", затем кликните на карте.');
       } catch (error) {
         if (cancelled) return;
         setStatus(requestError(error, "Ожидание сервера карты..."));
@@ -159,7 +159,7 @@ export default function Home() {
           <h1>Route Finder</h1>
         </div>
         <section>
-          <h2>Карта Молдовы</h2>
+          <h2>Карта</h2>
           {mapState && (
             <p className="meta">
               {mapState.nodes.toLocaleString()} узлов · {mapState.edges.toLocaleString()} рёбер

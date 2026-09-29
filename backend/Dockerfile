@@ -26,7 +26,7 @@ RUN useradd --create-home --uid ${UID} appuser \
  && mkdir -p /data && chown appuser /data /app
 USER appuser
 
-ENV OSM_PBF_PATH=/data/moldova.osm.drive.fastest.graph.pickle \
+ENV OSM_PBF_PATH=/data/moldova.osm.pbf \
     LOG_LEVEL=INFO
 
 EXPOSE 8000

@@ -1,267 +1,217 @@
 # PHFR — Fastest Path Finding on OpenStreetMap
 
-A small full-stack app for computing fastest-driving routes over an
-OpenStreetMap graph of Moldova:
+A high-performance full-stack web application for calculating fastest-driving routes over OpenStreetMap (OSM) road networks. The project is organized as a clean monorepo separating the FastAPI backend, Next.js frontend, and shared map data assets.
 
-- **Backend** — FastAPI + custom A* over a `networkx` graph built from a
-  `.osm.pbf` extract (or a pre-built `.pickle` cache).
-- **Frontend** — Next.js app in `web/` that renders the graph and routes.
-
-The repository ships with `moldova.osm.pbf` and a pre-built
-`moldova.osm.drive.fastest.graph.pickle` so the backend can start serving
-routes without any preprocessing.
+- **Backend** — FastAPI service utilizing a customized A* and Dijkstra pathfinding engine over a `networkx` graph built from an OSM `.pbf` extract or pre-computed `.pickle` graph cache.
+- **Frontend** — Modern Next.js (App Router) interface using MapLibre GL for interactive map rendering, point selection, and GeoJSON route visualization.
+- **Data** — Shared OpenStreetMap dataset and graph cache directory (`data/`) mounted in Docker or directly referenced in local development.
 
 ---
 
-## Quick start (Windows)
-
-### Backend
-
-```bash
-cd PHFR
-py -3.13 -m venv .venv
-.venv\Scripts\python -m pip install -r requirements-api.txt
-.venv\Scripts\python -m uvicorn app.main:app --reload
-```
-
-To expose the API on the LAN (needed if you run the web UI on another
-device):
-
-```bash
-.venv\Scripts\python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-### Frontend
-
-```bash
-cd PHFR/web
-npm install
-npm run dev        # localhost only
-npm run dev:lan    # bind to 0.0.0.0, use together with the --host 0.0.0.0 backend
-```
-
-### Tests
-
-```bash
-cd PHFR
-.venv\Scripts\python -m pip install -r requirements-dev.txt
-.venv\Scripts\python -m pytest
-```
-
-Tests are pure-logic only — no OSM data and no running server required.
-
-### Benchmarking pathfinding algorithms
-
-```bash
-cd PHFR
-.venv\Scripts\python scripts\benchmark_algorithms.py moldova.osm.drive.fastest.graph.pickle --pairs 50 --output results/bench.jsonl
-```
-
-Uses the shipped pickle cache, so it runs immediately without re-parsing
-the `.pbf`. See [Benchmarking](#benchmarking) below for what it measures.
-
----
-
-## HTTP API
-
-All endpoints are unchanged from the original implementation. Response
-models are declared in `app/schemas.py`, so `/docs` shows the real shapes.
-
-| Method | Path                    | Purpose                                    |
-|-------:|-------------------------|--------------------------------------------|
-| GET    | `/`                     | Service banner                             |
-| GET    | `/api/health`           | Liveness + map-load status                 |
-| GET    | `/api/maps/current`     | Metadata about the currently loaded map    |
-| POST   | `/api/maps`             | Load a map (path or use the default)       |
-| GET    | `/api/maps/roads`       | GeoJSON of all edges (for the map UI)      |
-| POST   | `/api/nodes/nearest`    | Snap a coordinate to the nearest graph node|
-| POST   | `/api/routes`           | Compute the fastest route between two points|
-
-Common error codes:
-
-| Status | Meaning                                  |
-|-------:|------------------------------------------|
-| 409    | No map is currently loaded               |
-| 503    | Map is still loading                     |
-| 500    | Map failed to load                       |
-| 422    | No route found between the given points  |
-
-All errors use the standard `{"detail": "..."}` body.
-
----
-
-## Configuration
-
-Settings live in `app/config.py` and are environment-overridable:
-
-| Variable       | Purpose                              | Default                        |
-|----------------|--------------------------------------|--------------------------------|
-| `OSM_PBF_PATH` | Default `.osm.pbf` / `.pickle` path  | `moldova.osm.drive.fastest…`   |
-| `CORS_ORIGINS` | Comma-separated allowed origins      | dev defaults                   |
-| `LOG_LEVEL`    | Python log level                     | `INFO`                         |
-
-See `.env.example` for a template.
-
----
-
-## Backend architecture
-
-The backend is split into three layers, each depending only on the one
-below it:
-
-```
-app/api/       FastAPI routers, request/response models, HTTP status codes.
-               Zero domain logic. Depends on services.
-
-app/services/  Orchestration: MapService owns the MapEngine instance, the
-               lock, background loading, and on-disk graph caching.
-               Depends on core.
-
-app/core/      Pure domain logic: MapEngine, A* pathfinding, edge-weight
-               annotation, file loaders. No FastAPI import anywhere in
-               this package — usable from a script or a test with no
-               HTTP server involved.
-```
-
-### Why this layout
-
-The original backend was three flat modules (`map_engine.py`,
-`pathfinding.py`, `edge_weights.py`) plus an `api.py` that mixed HTTP
-handling, global mutable state, locking, caching, and domain logic all
-together. That made it hard to test anything without booting the whole
-app, and hard to change one concern (e.g. swap the cache strategy)
-without touching HTTP code.
-
-The refactor keeps behaviour identical and only moves responsibilities
-to the right layer.
-
-### File-by-file mapping (old → new)
-
-| Old                                        | New                                                     |
-|--------------------------------------------|---------------------------------------------------------|
-| `api.py` module globals (`engine`, `engine_lock`, `map_loading`, `map_load_error`) | `app/services/map_service.py` (`MapService`) |
-| `api.py` (`_edge_coordinates`, `_roads_geojson`) | `app/services/geojson.py`                          |
-| `api.py` route handlers                    | `app/api/routers/{health,maps,nodes,routes}.py`         |
-| `api.py` (`Coordinate`, `RouteRequest`)    | `app/schemas.py`                                        |
-| `api.py` (FastAPI app + CORS + lifespan)   | `app/main.py`                                           |
-| `map_engine.py` (`MapEngine`)              | `app/core/map_engine.py`                                |
-| `map_engine.py` (`_load_pbf`)              | `app/core/loaders.py`                                   |
-| `pathfinding.py` (`astar_path`, `haversine_distance_m`) | `app/core/pathfinding.py`                  |
-| `pathfinding.py` (`RouteNotFoundError`, `MissingCoordinatesError`) | `app/core/exceptions.py` (re-exported)   |
-| `edge_weights.py` (`GraphAttributeAnnotator`, speed tables) | `app/core/edge_weights.py`              |
-| `edge_weights.py` (`InvalidEdgeWeightError`)| `app/core/exceptions.py` (re-exported)                 |
-| `map_engine.py` (`_run_algorithm_comparison`, `_save_comparison_to_file`, `_ROUTING_ALGORITHMS`) | `scripts/benchmark_algorithms.py` |
-
-`MapEngine.compute_route` previously ran every algorithm in
-`_ROUTING_ALGORITHMS` on every call — only the primary result was returned,
-but Dijkstra, A*, and a JSON-lines log write all happened as a side effect
-of production routing. That comparison/logging logic has been removed from
-`MapEngine` entirely: `compute_route` now just calls `astar_path` and
-returns its result, with no benchmarking or file I/O on the request path.
-Algorithm comparison lives exclusively in `scripts/benchmark_algorithms.py`
-now (see [Benchmarking](#benchmarking)), which you run explicitly, offline,
-against a loaded graph.
-
-### Concurrency
-
-The original `engine_lock` (a `threading.RLock`) is preserved exactly —
-same reentrancy, same scope around graph mutation and route computation.
-It now lives inside `MapService` instead of being a bare module global, so
-every access to the graph goes through one object instead of trusting each
-route handler to remember to acquire the lock.
-
-### Backward compatibility
-
-`uvicorn api:app` still works via the compatibility shim in the root
-`api.py`. Prefer `uvicorn app.main:app` going forward — the shim exists
-only for external tooling (deploy scripts, systemd units).
-
----
-
-## Benchmarking
-
-`scripts/benchmark_algorithms.py` is a standalone script for comparing the
-routing algorithms in `app/core/pathfinding.py` (Dijkstra and A*) — it has
-no effect on the running API and is run manually, offline, against a
-loaded graph.
-
-What it does:
-
-- Loads a graph via `MapEngine` (so edges get the same `length` /
-  `speed_kph` / `travel_time` annotation production routing uses). Pass a
-  `.osm`/`.osm.pbf` file to parse it fresh, or point it straight at the
-  pre-built `moldova.osm.drive.fastest.graph.pickle` cache — the same one
-  `MapService` reads from on startup — to skip the (multi-minute) `.pbf`
-  parse entirely.
-- Randomly samples `N` `(orig_node, dest_node)` pairs from the graph,
-  guaranteeing origin and destination are never the same node.
-- Runs every algorithm against every pair and records:
-  - **Execution time**, via `time.perf_counter_ns`.
-  - **Peak memory**, via `tracemalloc` (stdlib), plus a secondary RSS-delta
-    reading via `psutil` if it's installed.
-  - **Graph size** — total node/edge counts.
-  - **Path stats** — path node count, distance, and travel time, via
-    `MapEngine.route_stats`.
-  - **Status** — `ok` or `error`, with the exception captured for failed
-    pairs (e.g. `RouteNotFoundError`) instead of aborting the run.
-- Appends one JSON object per `(pair, algorithm)` run to a `.jsonl` file
-  for later analysis.
-
-Example:
-
-```bash
-python scripts/benchmark_algorithms.py moldova.osm.pbf --pairs 50 --output results/bench.jsonl
-
-# Or reuse the existing pickle cache instead of re-parsing the .pbf:
-python scripts/benchmark_algorithms.py moldova.osm.drive.fastest.graph.pickle --pairs 50
-```
-
-Useful flags: `--weight` (edge attribute to minimize, default
-`travel_time`), `--network-type` (for `.pbf` files, default `drive`), and
-`--seed` (for reproducible node-pair sampling).
-
-Note: the script only *reads* a pickle if you point it at one — unlike
-`MapService`, it never writes a fresh pickle cache itself.
-
----
-
-## Repository layout
+## Repository Structure
 
 ```
 .
-├── api.py                       # compat shim → app.main:app
-├── app/                         # backend package (see architecture above)
-│   ├── api/                     # routers + error handlers
-│   ├── core/                    # pure domain logic
-│   ├── services/                # MapService, GeoJSON helpers
-│   ├── config.py
-│   ├── logging_config.py
-│   ├── main.py
-│   └── schemas.py
-├── scripts/
-│   └── benchmark_algorithms.py  # standalone Dijkstra vs A* benchmark harness
-├── tests/                       # unit tests (no OSM data required)
-├── web/                         # Next.js frontend
-├── moldova.osm.pbf              # OSM extract (source data)
-├── moldova.osm.drive.fastest.graph.pickle  # prebuilt graph cache
-├── requirements-api.txt
-├── requirements-dev.txt
-├── pyproject.toml
-└── start.sh
+├── compose.yaml                # Multi-container Docker Compose definition
+├── .dockerignore               # Root Docker build ignore patterns
+├── .env.example                # Environment variables template
+├── .gitignore                  # Git ignore rules for Python, Node, caches, and data
+├── pytest.ini                  # Root pytest configuration for workspace-level test runs
+├── data/                       # Shared map data directory
+│   ├── .gitkeep
+│   ├── moldova.osm.pbf         # Source OpenStreetMap PBF extract
+│   └── moldova.osm.pbf.drive.fastest.graph.pickle  # Pre-computed road graph cache
+├── backend/                    # Python / FastAPI Backend
+│   ├── Dockerfile              # Production Dockerfile for API
+│   ├── .dockerignore           # Backend Docker build ignore patterns
+│   ├── pytest.ini              # Backend pytest configuration
+│   ├── requirements-api.txt    # Core API runtime dependencies
+│   ├── requirements-dev.txt    # Development and test dependencies
+│   ├── app/                    # FastAPI application package
+│   │   ├── main.py             # FastAPI entry point, lifespan, & router registration
+│   │   ├── config.py           # Environment-driven configuration & path resolver
+│   │   ├── logging_config.py   # Logging setup
+│   │   ├── schemas.py          # Pydantic models for API request/response validation
+│   │   ├── api/                # HTTP API layer
+│   │   │   ├── deps.py         # Router dependencies
+│   │   │   ├── error_handlers.py # Global exception handlers
+│   │   │   └── routers/        # Endpoint routers (health, maps, nodes, routes)
+│   │   ├── core/               # Domain routing logic
+│   │   │   ├── map_engine.py   # Graph storage and route computation engine
+│   │   │   ├── pathfinding.py  # Dijkstra and A* algorithms with Haversine heuristic
+│   │   │   ├── edge_weights.py # Road speed classification and travel-time annotator
+│   │   │   ├── loaders.py      # PBF/OSM loaders (pyrosm / OSMnx)
+│   │   │   └── exceptions.py   # Domain exception definitions
+│   │   └── services/           # Service orchestration layer
+│   │       ├── map_service.py  # Background loading, locking, and pickle caching
+│   │       └── geojson.py      # GeoJSON feature generation helpers
+│   ├── scripts/                # Benchmark and utility scripts
+│   │   └── benchmark_algorithms.py # Offline pathfinding algorithm benchmark harness
+│   ├── tests/                  # Unit test suite
+│   │   ├── test_edge_weights.py
+│   │   └── test_pathfinding.py
+│   └── results/                # Benchmark run output directory (JSON Lines)
+└── frontend/                   # Next.js / TypeScript Frontend
+    ├── Dockerfile              # Multi-stage Dockerfile for Next.js
+    ├── .dockerignore           # Frontend Docker build ignore patterns
+    ├── .gitignore              # Frontend Git ignore rules
+    ├── next.config.mjs         # Next.js configuration and API reverse-proxy
+    ├── package.json            # Node dependencies and build scripts
+    ├── package-lock.json       # Exact dependency lockfile
+    ├── tsconfig.json           # TypeScript configuration
+    ├── app/                    # App Router pages and global styles
+    │   ├── page.tsx            # Main interactive routing view
+    │   ├── layout.tsx          # Root HTML layout and metadata
+    │   └── globals.css         # Application stylesheet
+    └── components/             # React UI components
+        └── route-map.tsx       # MapLibre GL map component
 ```
 
 ---
 
-## Notes on the graph cache
+## Getting Started
 
-Loading the `.osm.pbf` and building the drivable graph is expensive
-(minutes). On startup `MapService` will:
+### Prerequisites
 
-1. Use the pickled graph (`moldova.osm.drive.fastest.graph.pickle`) if
-   it exists and is newer than the `.pbf`.
-2. Otherwise parse the `.pbf`, annotate edge weights (maxspeed,
-   oneway, etc.), and write a fresh pickle.
+- **Docker & Docker Compose** (for containerized execution)
+- **Python 3.11+** (for local backend development)
+- **Node.js 18+ & npm** (for local frontend development)
 
-The load runs in a background thread, guarded by the same `RLock` used
-for routing. During load, endpoints that need the graph return `503`;
-if loading fails they return `500` until a new load is triggered.
+---
+
+### Option 1: Docker Deployment (Recommended)
+
+To run the complete application stack (Backend API + Frontend Web):
+
+1. **Configure Environment Variables** (optional):
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Build and Start Containers**:
+   ```bash
+   docker compose up --build
+   ```
+
+3. **Access Services**:
+   - **Frontend UI**: [http://localhost:3000](http://localhost:3000)
+   - **Backend API**: [http://localhost:8000](http://localhost:8000)
+   - **Interactive API Docs (Swagger)**: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+To stop the containers:
+```bash
+docker compose down
+```
+
+---
+
+### Option 2: Local Development
+
+#### 1. Backend Setup (FastAPI)
+
+1. **Create and activate a virtual environment**:
+   - Linux / macOS:
+     ```bash
+     python3 -m venv .venv
+     source .venv/bin/activate
+     ```
+   - Windows:
+     ```bash
+     python -m venv .venv
+     .venv\Scripts\activate
+     ```
+
+2. **Install dependencies**:
+   ```bash
+   pip install -r backend/requirements-api.txt -r backend/requirements-dev.txt
+   ```
+
+3. **Run the FastAPI server**:
+   - Running directly from the `backend/` directory:
+     ```bash
+     cd backend
+     uvicorn app.main:app --reload --port 8000
+     ```
+   - Or running from the repository root:
+     ```bash
+     PYTHONPATH=backend uvicorn app.main:app --reload --port 8000
+     ```
+
+   The API will be available at [http://127.0.0.1:8000](http://127.0.0.1:8000).
+
+4. **Run Unit Tests**:
+   - From the repository root:
+     ```bash
+     pytest
+     ```
+   - Or from inside `backend/`:
+     ```bash
+     cd backend && pytest
+     ```
+
+5. **Run Pathfinding Benchmarks**:
+   To benchmark Dijkstra vs. A* over sample pairs of nodes offline using the pre-computed graph cache:
+   ```bash
+   python backend/scripts/benchmark_algorithms.py data/moldova.osm.pbf.drive.fastest.graph.pickle --pairs 50 --output backend/results/bench.jsonl
+   ```
+
+#### 2. Frontend Setup (Next.js)
+
+1. **Navigate to the frontend directory and install dependencies**:
+   ```bash
+   cd frontend
+   npm install
+   ```
+
+2. **Start the Next.js development server**:
+   ```bash
+   npm run dev
+   ```
+   Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+   > **Note**: For access across a local network (e.g. testing from mobile), use:
+   > ```bash
+   > npm run dev:lan
+   > ```
+
+---
+
+## Configuration Reference
+
+Configuration options can be customized via environment variables or a `.env` file at the project root:
+
+| Variable | Description | Default |
+|:---|:---|:---|
+| `OSM_PBF_PATH` | Path or filename of the OSM `.pbf` extract (searches `data/` and root) | `moldova.osm.pbf` |
+| `CORS_ORIGINS` | Comma-separated list of allowed CORS origins | `http://localhost:3000,http://127.0.0.1:3000` |
+| `LOG_LEVEL` | Python logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `INFO` |
+| `MAP_BOUNDS` | Bounding box coordinates `min_lon,min_lat,max_lon,max_lat` | `26.6,45.4,30.2,48.6` |
+| `API_INTERNAL_URL` | Internal backend URL used by Next.js server rewrites proxy | `http://127.0.0.1:8000` |
+| `NEXT_PUBLIC_API_URL` | Direct client-side backend URL (leave empty to use Next.js proxy) | `""` |
+
+---
+
+## HTTP API Overview
+
+The FastAPI backend provides REST endpoints for health checks, map metadata, road geometries, and routing calculations:
+
+| Method | Endpoint | Description |
+|:---|:---|:---|
+| `GET` | `/` | Service root and information banner |
+| `GET` | `/api/health` | Health and map readiness probe |
+| `GET` | `/api/maps/current` | Metadata of the currently loaded road network |
+| `POST` | `/api/maps` | Trigger loading of a specified map file |
+| `GET` | `/api/maps/roads` | GeoJSON FeatureCollection of road network edges |
+| `POST` | `/api/nodes/nearest` | Snap coordinates `(lon, lat)` to the nearest graph node |
+| `POST` | `/api/routes` | Compute the fastest route between origin and destination |
+
+Interactive Swagger documentation is available at `/docs` and OpenAPI schema at `/openapi.json`.
+
+---
+
+## Graph Caching & Loading
+
+Parsing raw OpenStreetMap `.pbf` files and computing topological road network graphs can take several minutes on larger maps.
+
+1. **Pickle Graph Cache**: On startup, `MapService` checks for a pre-computed graph pickle (`<map_file>.drive.fastest.graph.pickle`). If found and newer than the `.pbf`, it is deserialized in seconds.
+2. **Background Construction**: If no cache exists, the graph is constructed and annotated in a background thread while the service remains responsive. Endpoints requiring the graph return `503 Service Unavailable` with a descriptive message until graph loading completes.

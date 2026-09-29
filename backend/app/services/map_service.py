@@ -57,11 +57,11 @@ class MapService:
 
     def metadata(self, check_ready: bool = True) -> dict:
         if check_ready and self._loading:
-            raise MapLoadingError("Moldova map is loading.")
+            raise MapLoadingError("Road map is loading.")
         if self._error:
-            raise MapLoadFailedError(f"Moldova map failed to load: {self._error}")
+            raise MapLoadFailedError(f"Road map failed to load: {self._error}")
         if not self.engine.has_graph():
-            raise MapLoadingError("Moldova map is still loading.")
+            raise MapLoadingError("Road map is still loading.")
         return {
             "source": self.engine.graph_source,
             "nodes": self.engine.graph.number_of_nodes(),
@@ -81,7 +81,7 @@ class MapService:
             # background.
             if self.engine.has_graph():
                 return self.metadata(check_ready=False)
-            raise MapLoadingError("Moldova map is loading.")
+            raise MapLoadingError("Road map is loading.")
         with self._lock:
             return self.metadata()
 

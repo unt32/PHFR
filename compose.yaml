@@ -1,34 +1,38 @@
 services:
   api:
     healthcheck:
-          test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/maps/current')"]
-          interval: 10s
-          timeout: 5s
-          retries: 60
-          start_period: 60s
+      test: [ "CMD-SHELL",
+              "python -c \"import urllib.request, json; res = urllib.request.urlopen('http://127.0.0.1:8000/api/health'); data = json.loads(res.read()); exit(0 if res.status == 200 and data.get('map_loaded') is True else 1)\""
+      ]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
     build:
-      context: .
+      context: ./backend
       args:
         UID: ${UID:-1000}
     image: phfr-api
-    restart: unless-stopped
+    restart: no
     ports:
       - "8000:8000"
     environment:
-      OSM_PBF_PATH: /data/${OSM_PBF_PATH:-map.osm.pbf}
+      OSM_PBF_PATH: /data/${OSM_PBF_PATH:-moldova.osm.pbf}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
-    - ./data:/data
+      - ./data:/data
 
   web:
     build:
-      context: ./web
+      context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
-        API_INTERNAL_URL: http://api:8000
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+        API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:8000}
     image: phfr-web
-    restart: unless-stopped
+    restart: no
+    environment:
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:8000}
     ports:
       - "3000:3000"
     depends_on:

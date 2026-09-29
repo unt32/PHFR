@@ -1,20 +1,34 @@
 # Byte-compiled / Python cache files
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Environments
 venv/
 .venv/
 env/
+ENV/
 .env
 .env.*
 !.env.example
 
+# Node dependencies and build artifacts
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+.npm
+
 # Data & cache directories
-data/
+data/*
 cache/
+!data/.gitkeep
 
 # Heavy datasets & generated graph files
 *.osm
@@ -22,8 +36,15 @@ cache/
 *.pickle*
 *.graph.pickle
 
-# Node dependencies
-node_modules/
-
 # Benchmark results
 results/
+backend/results/
+*.jsonl
+
+# System & editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
