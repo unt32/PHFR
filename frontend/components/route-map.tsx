@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import maplibregl, { Map as MapLibreMap } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
-export type MapPoint = { node_id: string | number; lon: number; lat: number };
+export type MapPoint = { node_id?: string | number; lon: number; lat: number };
 
 type Props = {
   roads: GeoJSON.FeatureCollection | null;

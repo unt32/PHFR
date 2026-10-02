@@ -13,6 +13,7 @@ type MapState = {
 };
 type RouteResult = { stats: { distance_km: number; time_min: number }; node_count: number };
 type PointTarget = "start" | "end";
+type PendingPoint = MapPoint & { node_id?: string | number };
 
 async function apiError(response: Response) {
   const body = await response.json().catch(() => ({}));
@@ -40,7 +41,27 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   // Which point the next map click will set. null = not in selection mode.
   const [selectingTarget, setSelectingTarget] = useState<PointTarget | null>(null);
-  const selectionInFlight = useRef(false);
+  const startRef = useRef<PendingPoint | null>(null);
+  const endRef = useRef<PendingPoint | null>(null);
+  const pendingRequests = useRef<Record<PointTarget, Promise<MapPoint | null> | null>>({
+    start: null,
+    end: null,
+  });
+  const requestControllers = useRef<Record<PointTarget, AbortController | null>>({
+    start: null,
+    end: null,
+  });
+  const requestGenerations = useRef<Record<PointTarget, number>>({ start: 0, end: 0 });
+
+  const updatePoint = useCallback((target: PointTarget, point: PendingPoint | null) => {
+    if (target === "start") {
+      startRef.current = point;
+      setStart(point);
+    } else {
+      endRef.current = point;
+      setEnd(point);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,46 +110,76 @@ export default function Home() {
     });
   };
 
-  const selectPoint = useCallback(
-    async (lon: number, lat: number) => {
-      if (!selectingTarget || !roads || loading || selectionInFlight.current) return;
-      selectionInFlight.current = true;
-      const target = selectingTarget;
-      try {
-        const response = await fetch(`${API_URL}/api/nodes/nearest`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ lon, lat }),
-        });
-        if (!response.ok) throw new Error(await apiError(response));
-        const point: MapPoint = await response.json();
-        if (target === "start") {
-          setStart(point);
-          setStatus(end ? "Старт обновлён. Можно строить маршрут." : "Старт задан. Выберите финиш.");
-        } else {
-          setEnd(point);
-          setStatus(start ? "Финиш обновлён. Можно строить маршрут." : "Финиш задан. Выберите старт.");
+  const resolvePoint = useCallback(
+    (target: PointTarget, optimisticPoint: PendingPoint, generation: number, controller: AbortController) => {
+      const request = (async (): Promise<MapPoint | null> => {
+        try {
+          const response = await fetch(`${API_URL}/api/nodes/nearest`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lon: optimisticPoint.lon, lat: optimisticPoint.lat }),
+            signal: controller.signal,
+          });
+          if (!response.ok) throw new Error(await apiError(response));
+          const point: MapPoint = await response.json();
+          if (requestGenerations.current[target] !== generation) return null;
+          updatePoint(target, point);
+          return point;
+        } catch (error) {
+          if (controller.signal.aborted || requestGenerations.current[target] !== generation) return null;
+          updatePoint(target, null);
+          setStatus(requestError(error, "Не удалось привязать точку к дороге. Выберите её снова."));
+          return null;
+        } finally {
+          if (requestGenerations.current[target] === generation) {
+            pendingRequests.current[target] = null;
+            requestControllers.current[target] = null;
+          }
         }
-      } catch (error) {
-        setStatus(requestError(error, "Не удалось выбрать точку."));
-      } finally {
-        selectionInFlight.current = false;
-        // Point set (or the attempt finished) - leave selection mode automatically.
-        setSelectingTarget(null);
-      }
+      })();
+      pendingRequests.current[target] = request;
+      return request;
     },
-    [end, loading, roads, selectingTarget, start]
+    [updatePoint]
+  );
+
+  const selectPoint = useCallback(
+    (lon: number, lat: number) => {
+      if (!selectingTarget || !roads || loading) return;
+      const target = selectingTarget;
+      requestControllers.current[target]?.abort();
+      const generation = requestGenerations.current[target] + 1;
+      requestGenerations.current[target] = generation;
+      const controller = new AbortController();
+      requestControllers.current[target] = controller;
+      const optimisticPoint: PendingPoint = { lon, lat };
+
+      updatePoint(target, optimisticPoint);
+      setSelectingTarget(null);
+      setRoute(null);
+      setRouteResult(null);
+      setStatus(target === "start" ? "Старт задан. Выберите финиш." : "Финиш задан. Выберите старт.");
+      void resolvePoint(target, optimisticPoint, generation, controller);
+    },
+    [loading, resolvePoint, roads, selectingTarget, updatePoint]
   );
 
   const buildRoute = async () => {
-    if (!start || !end) return;
+    if (!startRef.current || !endRef.current) return;
     setLoading(true);
     setStatus("Ищем маршрут...");
     try {
+      await Promise.all((["start", "end"] as const).map((target) => pendingRequests.current[target]));
+      const resolvedStart = startRef.current;
+      const resolvedEnd = endRef.current;
+      if (resolvedStart?.node_id == null || resolvedEnd?.node_id == null) {
+        setStatus("Не удалось определить обе точки на дороге. Выберите их снова.");
+        return;
+      }
       const response = await fetch(`${API_URL}/api/routes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ start_node: start.node_id, end_node: end.node_id }),
+        body: JSON.stringify({ start_node: resolvedStart.node_id, end_node: resolvedEnd.node_id }),
       });
       if (!response.ok) throw new Error(await apiError(response));
       const result = await response.json();
@@ -143,6 +194,13 @@ export default function Home() {
   };
 
   const clear = () => {
+    (["start", "end"] as const).forEach((target) => {
+      requestControllers.current[target]?.abort();
+      requestGenerations.current[target] += 1;
+      pendingRequests.current[target] = null;
+    });
+    startRef.current = null;
+    endRef.current = null;
     setStart(null);
     setEnd(null);
     setRoute(null);
@@ -195,7 +253,7 @@ export default function Home() {
               {selectingTarget === "end" ? "Кликните на карте…" : end ? "Финиш задан" : "Задать финиш"}
             </button>
           </div>
-          <button className="primary" onClick={buildRoute} disabled={!start || !end || loading || !!selectingTarget}>
+          <button className="primary" onClick={buildRoute} disabled={!start || !end || loading}>
             Построить маршрут
           </button>
           <button className="secondary" onClick={clear} disabled={!start && !end}>
